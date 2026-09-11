@@ -2,6 +2,7 @@ import os
 import time
 import re
 import json
+import csv
 import requests
 
 from decimal import Decimal
@@ -462,7 +463,6 @@ def save_records(records):
     Save all validated records to output/books.json.
     """
 
-    # Create output directory
     os.makedirs(
         "output",
         exist_ok=True
@@ -470,13 +470,11 @@ def save_records(records):
 
     output_file = "output/books.json"
 
-    # Convert Pydantic records into JSON-safe data
     data = [
         record.model_dump(mode="json")
         for record in records
     ]
 
-    # Save UTF-8 JSON
     with open(
         output_file,
         "w",
@@ -493,6 +491,62 @@ def save_records(records):
     print()
     print(
         f"Saved {len(data)} records to "
+        f"{output_file}"
+    )
+
+
+# --------------------------------------------------
+# Save validated records to CSV
+# --------------------------------------------------
+
+def save_records_csv(records):
+    """
+    Save all validated records to output/books.csv.
+    """
+
+    os.makedirs(
+        "output",
+        exist_ok=True
+    )
+
+    output_file = "output/books.csv"
+
+    fieldnames = [
+        "title",
+        "product_url",
+        "price",
+        "availability_count",
+        "rating",
+        "description",
+        "source_page",
+        "fetched_at"
+    ]
+
+    with open(
+        output_file,
+        "w",
+        encoding="utf-8",
+        newline=""
+    ) as file:
+
+        writer = csv.DictWriter(
+            file,
+            fieldnames=fieldnames
+        )
+
+        writer.writeheader()
+
+        for record in records:
+
+            data = record.model_dump(
+                mode="json"
+            )
+
+            writer.writerow(data)
+
+    print()
+    print(
+        f"Saved {len(records)} records to "
         f"{output_file}"
     )
 
@@ -524,7 +578,7 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------
-    # Extract and validate all 60 book records
+    # Extract and validate all book records
     # --------------------------------------------------
 
     records = []
@@ -621,17 +675,19 @@ if __name__ == "__main__":
         )
 
     # --------------------------------------------------
-    # Save JSON output
+    # Save output files
     # --------------------------------------------------
 
     if validation_errors == 0:
 
         save_records(records)
 
+        save_records_csv(records)
+
     else:
 
         print()
         print(
-            "JSON was not saved because "
+            "Output files were not saved because "
             "validation errors were found."
         )
