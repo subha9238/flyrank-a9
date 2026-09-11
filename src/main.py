@@ -26,14 +26,6 @@ DELAY_SECONDS = 0.5
 def fetch_page(url, cache_file):
     """
     Fetch a page from the website or read it from cache.
-
-    Real requests use:
-    - identifying User-Agent
-    - timeout
-    - HTTP status check
-    - 0.5 second delay
-
-    Cached pages do not make a network request.
     """
 
     # Check cache first
@@ -55,7 +47,7 @@ def fetch_page(url, cache_file):
         timeout=TIMEOUT
     )
 
-    # Only HTTP 200 is accepted
+    # Check HTTP status
     if response.status_code != 200:
         raise RuntimeError(
             f"Failed to fetch page: HTTP {response.status_code}"
@@ -63,10 +55,10 @@ def fetch_page(url, cache_file):
 
     html = response.text
 
-    # Create cache directory if needed
+    # Create cache directory
     os.makedirs("cache", exist_ok=True)
 
-    # Save HTML to cache
+    # Save HTML
     with open(cache_file, "w", encoding="utf-8") as file:
         file.write(html)
 
@@ -85,7 +77,6 @@ def discover_books():
     """
 
     current_url = BASE_URL
-
     catalogue_pages = 0
     all_book_urls = []
 
@@ -99,31 +90,26 @@ def discover_books():
             f"{page_number}: {current_url}"
         )
 
-        # Each catalogue page gets its own cache file
         cache_file = (
             f"cache/catalogue-page-{page_number}.html"
         )
 
-        # Fetch page or use cache
         html = fetch_page(
             current_url,
             cache_file
         )
 
-        # Parse HTML
         soup = BeautifulSoup(
             html,
             "html.parser"
         )
 
-        # Find all books on this page
         books = soup.select(
             "article.product_pod h3 a"
         )
 
         print(f"Books found: {len(books)}")
 
-        # Convert every relative URL to an absolute URL
         for book in books:
 
             href = book.get("href")
@@ -140,22 +126,19 @@ def discover_books():
 
         catalogue_pages += 1
 
-        # Find the website's Next link
         next_link = soup.select_one(
             "li.next a"
         )
 
-        # Stop if there is no Next link
         if not next_link:
             break
 
-        # Convert the Next link to an absolute URL
         current_url = urljoin(
             current_url,
             next_link.get("href")
         )
 
-    # Remove duplicate URLs
+    # Remove duplicates
     unique_book_urls = list(
         dict.fromkeys(all_book_urls)
     )
@@ -168,9 +151,146 @@ def discover_books():
 
 
 # --------------------------------------------------
-# Main program
+# Extract one book
 # --------------------------------------------------
 
+def extract_book(html, product_url, source_page):
+    """
+    Extract the eight required raw fields
+    from one book detail page.
+    """
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    # ------------------------------
+    # Title
+    # ------------------------------
+
+    title_element = soup.select_one(
+        "div.product_main h1"
+    )
+
+    title = (
+        title_element.get_text(strip=True)
+        if title_element
+        else None
+    )
+
+    # ------------------------------
+    # Price
+    # ------------------------------
+
+    price_element = soup.select_one(
+        "div.product_main .price_color"
+    )
+
+    price_text = (
+        price_element.get_text(strip=True)
+        if price_element
+        else None
+    )
+
+    # ------------------------------
+    # Availability
+    # ------------------------------
+
+    availability_element = soup.select_one(
+        "div.product_main .availability"
+    )
+
+    availability_text = (
+        availability_element.get_text(
+            " ",
+            strip=True
+        )
+        if availability_element
+        else None
+    )
+
+    # ------------------------------
+    # Rating
+    # ------------------------------
+
+    rating_element = soup.select_one(
+        "div.product_main p.star-rating"
+    )
+
+    rating_text = None
+
+    if rating_element:
+
+        classes = rating_element.get(
+            "class",
+            []
+        )
+
+        for rating in [
+            "One",
+            "Two",
+            "Three",
+            "Four",
+            "Five"
+        ]:
+
+            if rating in classes:
+                rating_text = rating
+                break
+
+    # ------------------------------
+    # Description
+    # ------------------------------
+
+    description_element = soup.select_one(
+        "#product_description"
+    )
+
+    description = None
+
+    if description_element:
+
+        description_paragraph = (
+            description_element.find_next_sibling("p")
+        )
+
+        if description_paragraph:
+            description = (
+                description_paragraph.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+    # ------------------------------
+    # Fetch time
+    # ------------------------------
+
+    fetched_at = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime()
+    )
+
+    # ------------------------------
+    # Return raw record
+    # ------------------------------
+
+    return {
+        "title": title,
+        "product_url": product_url,
+        "price_text": price_text,
+        "availability_text": availability_text,
+        "rating_text": rating_text,
+        "description": description,
+        "source_page": source_page,
+        "fetched_at": fetched_at
+    }
+
+
+# --------------------------------------------------
+# Main program
+# --------------------------------------------------
 if __name__ == "__main__":
 
     (
@@ -180,6 +300,7 @@ if __name__ == "__main__":
     ) = discover_books()
 
     print()
+
     print(
         f"catalogue_pages={catalogue_pages}"
     )
@@ -191,3 +312,60 @@ if __name__ == "__main__":
     print(
         f"unique_urls={len(unique_book_urls)}"
     )
+
+    # ----------------------------------------------
+    # Extract all 60 book records
+    # ----------------------------------------------
+
+    records = []
+
+    for index, book_url in enumerate(
+        unique_book_urls,
+        start=1
+    ):
+
+        print()
+        print(
+            f"Processing book {index}/"
+            f"{len(unique_book_urls)}"
+        )
+
+        # Create a separate cache file
+        cache_file = (
+            f"cache/book-{index}.html"
+        )
+
+        # Fetch book page
+        html = fetch_page(
+            book_url,
+            cache_file
+        )
+
+        # Extract raw record
+        record = extract_book(
+            html,
+            book_url,
+            BASE_URL
+        )
+
+        records.append(record)
+
+        print(
+            f"Extracted: {record['title']}"
+        )
+
+    # ----------------------------------------------
+    # Final summary
+    # ----------------------------------------------
+
+    print()
+    print(
+        f"detail_pages={len(records)}"
+    )
+
+    # Print the first complete record
+    if records:
+        print()
+        print("FIRST COMPLETE RAW RECORD")
+        print("--------------------------")
+        print(records[0])
