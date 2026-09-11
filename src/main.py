@@ -1,8 +1,15 @@
 import os
 import time
+import re
 import requests
+
+from decimal import Decimal
+from typing import Optional
+
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 # --------------------------------------------------
@@ -20,6 +27,97 @@ DELAY_SECONDS = 0.5
 
 
 # --------------------------------------------------
+# Pydantic validation model
+# --------------------------------------------------
+
+class BookRecord(BaseModel):
+    """
+    Clean and validated book record.
+    """
+
+    title: str
+    product_url: HttpUrl
+    price: Decimal = Field(gt=0)
+    availability_count: int = Field(ge=0)
+    rating: int = Field(ge=1, le=5)
+    description: Optional[str] = None
+    source_page: HttpUrl
+    fetched_at: str
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_empty(cls, value):
+        value = value.strip()
+
+        if not value:
+            raise ValueError("title cannot be empty")
+
+        return value
+
+
+# --------------------------------------------------
+# Cleaning functions
+# --------------------------------------------------
+
+def clean_price(price_text):
+    """
+    Convert a scraped price such as '£51.77'
+    into Decimal('51.77').
+    """
+
+    if not price_text:
+        return None
+
+    match = re.search(
+        r"\d+(?:\.\d+)?",
+        price_text
+    )
+
+    if not match:
+        return None
+
+    return Decimal(match.group(0))
+
+
+def clean_availability(availability_text):
+    """
+    Convert 'In stock (22 available)' into 22.
+    """
+
+    if not availability_text:
+        return None
+
+    match = re.search(
+        r"\((\d+)\s+available\)",
+        availability_text
+    )
+
+    if not match:
+        return None
+
+    return int(match.group(1))
+
+
+def clean_rating(rating_text):
+    """
+    Convert rating words into integers.
+    """
+
+    rating_map = {
+        "One": 1,
+        "Two": 2,
+        "Three": 3,
+        "Four": 4,
+        "Five": 5
+    }
+
+    if not rating_text:
+        return None
+
+    return rating_map.get(rating_text)
+
+
+# --------------------------------------------------
 # Fetch and cache a page
 # --------------------------------------------------
 
@@ -30,16 +128,27 @@ def fetch_page(url, cache_file):
 
     # Check cache first
     if os.path.exists(cache_file):
-        with open(cache_file, "r", encoding="utf-8") as file:
+
+        with open(
+            cache_file,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
             html = file.read()
 
-        print(f"CACHE HIT: {len(html)} bytes")
+        print(
+            f"CACHE HIT: {len(html)} bytes"
+        )
+
         return html
 
     # Wait before making a real request
     time.sleep(DELAY_SECONDS)
 
-    print(f"FETCH: {url}")
+    print(
+        f"FETCH: {url}"
+    )
 
     response = requests.get(
         url,
@@ -49,6 +158,7 @@ def fetch_page(url, cache_file):
 
     # Check HTTP status
     if response.status_code != 200:
+
         raise RuntimeError(
             f"Failed to fetch page: HTTP {response.status_code}"
         )
@@ -56,13 +166,23 @@ def fetch_page(url, cache_file):
     html = response.text
 
     # Create cache directory
-    os.makedirs("cache", exist_ok=True)
+    os.makedirs(
+        "cache",
+        exist_ok=True
+    )
 
     # Save HTML
-    with open(cache_file, "w", encoding="utf-8") as file:
+    with open(
+        cache_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         file.write(html)
 
-    print(f"Saved to cache: {len(html)} bytes")
+    print(
+        f"Saved to cache: {len(html)} bytes"
+    )
 
     return html
 
@@ -77,7 +197,9 @@ def discover_books():
     """
 
     current_url = BASE_URL
+
     catalogue_pages = 0
+
     all_book_urls = []
 
     while catalogue_pages < 3:
@@ -85,6 +207,7 @@ def discover_books():
         page_number = catalogue_pages + 1
 
         print()
+
         print(
             f"Processing catalogue page "
             f"{page_number}: {current_url}"
@@ -108,13 +231,16 @@ def discover_books():
             "article.product_pod h3 a"
         )
 
-        print(f"Books found: {len(books)}")
+        print(
+            f"Books found: {len(books)}"
+        )
 
         for book in books:
 
             href = book.get("href")
 
             if href:
+
                 absolute_url = urljoin(
                     current_url,
                     href
@@ -138,7 +264,7 @@ def discover_books():
             next_link.get("href")
         )
 
-    # Remove duplicates
+    # Remove duplicate URLs
     unique_book_urls = list(
         dict.fromkeys(all_book_urls)
     )
@@ -154,10 +280,13 @@ def discover_books():
 # Extract one book
 # --------------------------------------------------
 
-def extract_book(html, product_url, source_page):
+def extract_book(
+    html,
+    product_url,
+    source_page
+):
     """
-    Extract the eight required raw fields
-    from one book detail page.
+    Extract the eight required raw fields.
     """
 
     soup = BeautifulSoup(
@@ -165,9 +294,9 @@ def extract_book(html, product_url, source_page):
         "html.parser"
     )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Title
-    # ------------------------------
+    # --------------------------------------------------
 
     title_element = soup.select_one(
         "div.product_main h1"
@@ -179,9 +308,9 @@ def extract_book(html, product_url, source_page):
         else None
     )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Price
-    # ------------------------------
+    # --------------------------------------------------
 
     price_element = soup.select_one(
         "div.product_main .price_color"
@@ -193,9 +322,9 @@ def extract_book(html, product_url, source_page):
         else None
     )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Availability
-    # ------------------------------
+    # --------------------------------------------------
 
     availability_element = soup.select_one(
         "div.product_main .availability"
@@ -210,9 +339,9 @@ def extract_book(html, product_url, source_page):
         else None
     )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Rating
-    # ------------------------------
+    # --------------------------------------------------
 
     rating_element = soup.select_one(
         "div.product_main p.star-rating"
@@ -236,12 +365,14 @@ def extract_book(html, product_url, source_page):
         ]:
 
             if rating in classes:
+
                 rating_text = rating
+
                 break
 
-    # ------------------------------
+    # --------------------------------------------------
     # Description
-    # ------------------------------
+    # --------------------------------------------------
 
     description_element = soup.select_one(
         "#product_description"
@@ -256,6 +387,7 @@ def extract_book(html, product_url, source_page):
         )
 
         if description_paragraph:
+
             description = (
                 description_paragraph.get_text(
                     " ",
@@ -263,18 +395,18 @@ def extract_book(html, product_url, source_page):
                 )
             )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Fetch time
-    # ------------------------------
+    # --------------------------------------------------
 
     fetched_at = time.strftime(
         "%Y-%m-%dT%H:%M:%SZ",
         time.gmtime()
     )
 
-    # ------------------------------
+    # --------------------------------------------------
     # Return raw record
-    # ------------------------------
+    # --------------------------------------------------
 
     return {
         "title": title,
@@ -289,8 +421,41 @@ def extract_book(html, product_url, source_page):
 
 
 # --------------------------------------------------
+# Clean and validate one book
+# --------------------------------------------------
+
+def clean_and_validate_book(raw_record):
+    """
+    Convert raw scraped values into clean,
+    validated Pydantic data.
+    """
+
+    cleaned_record = {
+        "title": raw_record["title"],
+        "product_url": raw_record["product_url"],
+        "price": clean_price(
+            raw_record["price_text"]
+        ),
+        "availability_count": clean_availability(
+            raw_record["availability_text"]
+        ),
+        "rating": clean_rating(
+            raw_record["rating_text"]
+        ),
+        "description": raw_record["description"],
+        "source_page": raw_record["source_page"],
+        "fetched_at": raw_record["fetched_at"]
+    }
+
+    return BookRecord(
+        **cleaned_record
+    )
+
+
+# --------------------------------------------------
 # Main program
 # --------------------------------------------------
+
 if __name__ == "__main__":
 
     (
@@ -313,11 +478,13 @@ if __name__ == "__main__":
         f"unique_urls={len(unique_book_urls)}"
     )
 
-    # ----------------------------------------------
-    # Extract all 60 book records
-    # ----------------------------------------------
+    # --------------------------------------------------
+    # Extract and validate all 60 book records
+    # --------------------------------------------------
 
     records = []
+
+    validation_errors = 0
 
     for index, book_url in enumerate(
         unique_book_urls,
@@ -325,47 +492,85 @@ if __name__ == "__main__":
     ):
 
         print()
+
         print(
             f"Processing book {index}/"
             f"{len(unique_book_urls)}"
         )
 
-        # Create a separate cache file
         cache_file = (
             f"cache/book-{index}.html"
         )
 
-        # Fetch book page
         html = fetch_page(
             book_url,
             cache_file
         )
 
-        # Extract raw record
-        record = extract_book(
+        raw_record = extract_book(
             html,
             book_url,
             BASE_URL
         )
 
-        records.append(record)
+        try:
 
-        print(
-            f"Extracted: {record['title']}"
-        )
+            validated_record = (
+                clean_and_validate_book(
+                    raw_record
+                )
+            )
 
-    # ----------------------------------------------
+            records.append(
+                validated_record
+            )
+
+            print(
+                f"Validated: "
+                f"{validated_record.title}"
+            )
+
+        except Exception as error:
+
+            validation_errors += 1
+
+            print(
+                f"VALIDATION ERROR: "
+                f"{raw_record.get('title')}"
+            )
+
+            print(error)
+
+    # --------------------------------------------------
     # Final summary
-    # ----------------------------------------------
+    # --------------------------------------------------
 
     print()
+
     print(
         f"detail_pages={len(records)}"
     )
 
-    # Print the first complete record
+    print(
+        f"validation_errors={validation_errors}"
+    )
+
+    # --------------------------------------------------
+    # Show first clean record
+    # --------------------------------------------------
+
     if records:
+
         print()
-        print("FIRST COMPLETE RAW RECORD")
-        print("--------------------------")
-        print(records[0])
+
+        print(
+            "FIRST CLEAN VALIDATED RECORD"
+        )
+
+        print(
+            "-----------------------------"
+        )
+
+        print(
+            records[0].model_dump()
+        )
