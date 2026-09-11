@@ -1,0 +1,16 @@
+{
+  "catalogue_pages": 3,
+  "discovered_urls": 60,
+  "unique_urls": 60,
+  "detail_pages": 60,
+  "valid_records": 60,
+  "invalid_records": 0,
+  "failed_pages": 0,
+  "catalogue_cache_hits": 3,
+  "catalogue_fetched_pages": 0,
+  "detail_cache_hits": 60,
+  "detail_fetched_pages": 0,
+  "total_cache_hits": 63,
+  "total_fetched_pages": 0,
+  "elapsed_seconds": 0.53
+}

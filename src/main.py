@@ -14,9 +14,9 @@ from urllib.parse import urljoin
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
-# --------------------------------------------------
+# ==================================================
 # Configuration
-# --------------------------------------------------
+# ==================================================
 
 BASE_URL = "https://books.toscrape.com/catalogue/page-1.html"
 
@@ -26,11 +26,21 @@ HEADERS = {
 
 TIMEOUT = 10
 DELAY_SECONDS = 0.5
+MAX_RETRIES = 1
+
+# Optional failure-test URL.
+#
+# Normal run:
+#   TEST_BROKEN_URL is not set.
+#
+# Failure test:
+#   Set TEST_BROKEN_URL to a deliberately broken URL.
+TEST_BROKEN_URL = os.getenv("TEST_BROKEN_URL")
 
 
-# --------------------------------------------------
+# ==================================================
 # Pydantic validation model
-# --------------------------------------------------
+# ==================================================
 
 class BookRecord(BaseModel):
     """
@@ -38,33 +48,42 @@ class BookRecord(BaseModel):
     """
 
     title: str
+
     product_url: HttpUrl
-    price: Decimal = Field(gt=0)
+
+    price_gbp: Decimal = Field(gt=0)
+
     availability_count: int = Field(ge=0)
+
     rating: int = Field(ge=1, le=5)
+
     description: Optional[str] = None
+
     source_page: HttpUrl
+
     fetched_at: str
 
     @field_validator("title")
     @classmethod
     def title_must_not_be_empty(cls, value):
+
         value = value.strip()
 
         if not value:
-            raise ValueError("title cannot be empty")
+            raise ValueError(
+                "title cannot be empty"
+            )
 
         return value
 
 
-# --------------------------------------------------
+# ==================================================
 # Cleaning functions
-# --------------------------------------------------
+# ==================================================
 
 def clean_price(price_text):
     """
-    Convert a scraped price such as '£51.77'
-    into Decimal('51.77').
+    Convert text such as £51.77 into Decimal('51.77').
     """
 
     if not price_text:
@@ -78,12 +97,16 @@ def clean_price(price_text):
     if not match:
         return None
 
-    return Decimal(match.group(0))
+    return Decimal(
+        match.group(0)
+    )
 
 
 def clean_availability(availability_text):
     """
-    Convert 'In stock (22 available)' into 22.
+    Convert text such as:
+    'In stock (22 available)'
+    into integer 22.
     """
 
     if not availability_text:
@@ -97,12 +120,14 @@ def clean_availability(availability_text):
     if not match:
         return None
 
-    return int(match.group(1))
+    return int(
+        match.group(1)
+    )
 
 
 def clean_rating(rating_text):
     """
-    Convert rating words into integers.
+    Convert rating words into numbers.
     """
 
     rating_map = {
@@ -116,19 +141,32 @@ def clean_rating(rating_text):
     if not rating_text:
         return None
 
-    return rating_map.get(rating_text)
+    return rating_map.get(
+        rating_text
+    )
 
 
-# --------------------------------------------------
-# Fetch and cache a page
-# --------------------------------------------------
+# ==================================================
+# Fetch and cache page
+# ==================================================
 
 def fetch_page(url, cache_file):
     """
-    Fetch a page from the website or read it from cache.
+    Fetch a page from the website or use the cache.
+
+    Network requests:
+    - use identifying User-Agent
+    - use timeout
+    - wait 0.5 seconds
+    - retry once for request errors / 5xx
+
+    403 and 404 are not retried.
     """
 
+    # --------------------------------------------------
     # Check cache first
+    # --------------------------------------------------
+
     if os.path.exists(cache_file):
 
         with open(
@@ -143,59 +181,132 @@ def fetch_page(url, cache_file):
             f"CACHE HIT: {len(html)} bytes"
         )
 
-        return html
+        return html, True
 
-    # Wait before making a real request
-    time.sleep(DELAY_SECONDS)
+    # --------------------------------------------------
+    # Real network request
+    # --------------------------------------------------
 
-    print(
-        f"FETCH: {url}"
-    )
+    for attempt in range(
+        MAX_RETRIES + 1
+    ):
 
-    response = requests.get(
-        url,
-        headers=HEADERS,
-        timeout=TIMEOUT
-    )
-
-    # Check HTTP status
-    if response.status_code != 200:
-
-        raise RuntimeError(
-            f"Failed to fetch page: HTTP {response.status_code}"
+        time.sleep(
+            DELAY_SECONDS
         )
 
-    html = response.text
+        print(
+            f"FETCH: {url}"
+        )
 
-    # Create cache directory
-    os.makedirs(
-        "cache",
-        exist_ok=True
+        try:
+
+            response = requests.get(
+                url,
+                headers=HEADERS,
+                timeout=TIMEOUT
+            )
+
+        except requests.RequestException as error:
+
+            print(
+                f"REQUEST ERROR: {error}"
+            )
+
+            if attempt < MAX_RETRIES:
+
+                print(
+                    "Retrying once..."
+                )
+
+                continue
+
+            raise RuntimeError(
+                f"Request failed: {error}"
+            )
+
+        # --------------------------------------------------
+        # 403 / 404
+        # Do NOT retry
+        # --------------------------------------------------
+
+        if response.status_code in (
+            403,
+            404
+        ):
+
+            raise RuntimeError(
+                f"HTTP {response.status_code}"
+            )
+
+        # --------------------------------------------------
+        # Server errors
+        # Retry once
+        # --------------------------------------------------
+
+        if response.status_code >= 500:
+
+            if attempt < MAX_RETRIES:
+
+                print(
+                    f"HTTP {response.status_code}. "
+                    f"Retrying once..."
+                )
+
+                continue
+
+            raise RuntimeError(
+                f"HTTP {response.status_code}"
+            )
+
+        # --------------------------------------------------
+        # Other non-200 response
+        # --------------------------------------------------
+
+        if response.status_code != 200:
+
+            raise RuntimeError(
+                f"HTTP {response.status_code}"
+            )
+
+        # --------------------------------------------------
+        # Successful response
+        # --------------------------------------------------
+
+        html = response.text
+
+        os.makedirs(
+            "cache",
+            exist_ok=True
+        )
+
+        with open(
+            cache_file,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(html)
+
+        print(
+            f"Saved to cache: {len(html)} bytes"
+        )
+
+        return html, False
+
+    raise RuntimeError(
+        "Unable to fetch page"
     )
 
-    # Save HTML
-    with open(
-        cache_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
 
-        file.write(html)
-
-    print(
-        f"Saved to cache: {len(html)} bytes"
-    )
-
-    return html
-
-
-# --------------------------------------------------
-# Discover the first 3 catalogue pages
-# --------------------------------------------------
+# ==================================================
+# Discover first 3 catalogue pages
+# ==================================================
 
 def discover_books():
     """
-    Discover book URLs from the first three catalogue pages.
+    Discover book URLs from the first three
+    catalogue pages.
     """
 
     current_url = BASE_URL
@@ -204,9 +315,17 @@ def discover_books():
 
     all_book_urls = []
 
+    catalogue_cache_hits = 0
+
+    catalogue_fetched_pages = 0
+
+    catalogue_failed_pages = []
+
     while catalogue_pages < 3:
 
-        page_number = catalogue_pages + 1
+        page_number = (
+            catalogue_pages + 1
+        )
 
         print()
 
@@ -216,13 +335,48 @@ def discover_books():
         )
 
         cache_file = (
-            f"cache/catalogue-page-{page_number}.html"
+            f"cache/catalogue-page-"
+            f"{page_number}.html"
         )
 
-        html = fetch_page(
-            current_url,
-            cache_file
-        )
+        try:
+
+            html, from_cache = fetch_page(
+                current_url,
+                cache_file
+            )
+
+            if from_cache:
+
+                catalogue_cache_hits += 1
+
+            else:
+
+                catalogue_fetched_pages += 1
+
+        except RuntimeError as error:
+
+            print()
+
+            print(
+                f"FAILED catalogue page: "
+                f"{current_url}"
+            )
+
+            print(
+                f"ERROR: {error}"
+            )
+
+            catalogue_failed_pages.append({
+                "url": current_url,
+                "error": str(error)
+            })
+
+            break
+
+        # --------------------------------------------------
+        # Parse catalogue page
+        # --------------------------------------------------
 
         soup = BeautifulSoup(
             html,
@@ -237,22 +391,33 @@ def discover_books():
             f"Books found: {len(books)}"
         )
 
+        # --------------------------------------------------
+        # Extract book URLs
+        # --------------------------------------------------
+
         for book in books:
 
-            href = book.get("href")
+            href = book.get(
+                "href"
+            )
 
-            if href:
+            if not href:
+                continue
 
-                absolute_url = urljoin(
-                    current_url,
-                    href
-                )
+            absolute_url = urljoin(
+                current_url,
+                href
+            )
 
-                all_book_urls.append(
-                    absolute_url
-                )
+            all_book_urls.append(
+                absolute_url
+            )
 
         catalogue_pages += 1
+
+        # --------------------------------------------------
+        # Find next page
+        # --------------------------------------------------
 
         next_link = soup.select_one(
             "li.next a"
@@ -266,21 +431,29 @@ def discover_books():
             next_link.get("href")
         )
 
+    # --------------------------------------------------
     # Remove duplicate URLs
+    # --------------------------------------------------
+
     unique_book_urls = list(
-        dict.fromkeys(all_book_urls)
+        dict.fromkeys(
+            all_book_urls
+        )
     )
 
     return (
         catalogue_pages,
         all_book_urls,
-        unique_book_urls
+        unique_book_urls,
+        catalogue_cache_hits,
+        catalogue_fetched_pages,
+        catalogue_failed_pages
     )
 
 
-# --------------------------------------------------
+# ==================================================
 # Extract one book
-# --------------------------------------------------
+# ==================================================
 
 def extract_book(
     html,
@@ -288,7 +461,7 @@ def extract_book(
     source_page
 ):
     """
-    Extract the eight required raw fields.
+    Extract raw book fields from a detail page.
     """
 
     soup = BeautifulSoup(
@@ -305,7 +478,9 @@ def extract_book(
     )
 
     title = (
-        title_element.get_text(strip=True)
+        title_element.get_text(
+            strip=True
+        )
         if title_element
         else None
     )
@@ -319,7 +494,9 @@ def extract_book(
     )
 
     price_text = (
-        price_element.get_text(strip=True)
+        price_element.get_text(
+            strip=True
+        )
         if price_element
         else None
     )
@@ -385,7 +562,9 @@ def extract_book(
     if description_element:
 
         description_paragraph = (
-            description_element.find_next_sibling("p")
+            description_element.find_next_sibling(
+                "p"
+            )
         )
 
         if description_paragraph:
@@ -406,10 +585,6 @@ def extract_book(
         time.gmtime()
     )
 
-    # --------------------------------------------------
-    # Return raw record
-    # --------------------------------------------------
-
     return {
         "title": title,
         "product_url": product_url,
@@ -422,31 +597,53 @@ def extract_book(
     }
 
 
-# --------------------------------------------------
+# ==================================================
 # Clean and validate one book
-# --------------------------------------------------
+# ==================================================
 
-def clean_and_validate_book(raw_record):
+def clean_and_validate_book(
+    raw_record
+):
     """
-    Convert raw scraped values into clean,
-    validated Pydantic data.
+    Convert raw scraped fields into
+    clean, validated fields.
     """
 
     cleaned_record = {
+
         "title": raw_record["title"],
-        "product_url": raw_record["product_url"],
-        "price": clean_price(
+
+        "product_url": raw_record[
+            "product_url"
+        ],
+
+        "price_gbp": clean_price(
             raw_record["price_text"]
         ),
-        "availability_count": clean_availability(
-            raw_record["availability_text"]
+
+        "availability_count": (
+            clean_availability(
+                raw_record[
+                    "availability_text"
+                ]
+            )
         ),
+
         "rating": clean_rating(
             raw_record["rating_text"]
         ),
-        "description": raw_record["description"],
-        "source_page": raw_record["source_page"],
-        "fetched_at": raw_record["fetched_at"]
+
+        "description": raw_record[
+            "description"
+        ],
+
+        "source_page": raw_record[
+            "source_page"
+        ],
+
+        "fetched_at": raw_record[
+            "fetched_at"
+        ]
     }
 
     return BookRecord(
@@ -454,24 +651,25 @@ def clean_and_validate_book(raw_record):
     )
 
 
-# --------------------------------------------------
-# Save validated records to JSON
-# --------------------------------------------------
+# ==================================================
+# Save JSON
+# ==================================================
 
 def save_records(records):
-    """
-    Save all validated records to output/books.json.
-    """
 
     os.makedirs(
         "output",
         exist_ok=True
     )
 
-    output_file = "output/books.json"
+    output_file = (
+        "output/books.json"
+    )
 
     data = [
-        record.model_dump(mode="json")
+        record.model_dump(
+            mode="json"
+        )
         for record in records
     ]
 
@@ -489,32 +687,32 @@ def save_records(records):
         )
 
     print()
+
     print(
         f"Saved {len(data)} records to "
         f"{output_file}"
     )
 
 
-# --------------------------------------------------
-# Save validated records to CSV
-# --------------------------------------------------
+# ==================================================
+# Save CSV
+# ==================================================
 
 def save_records_csv(records):
-    """
-    Save all validated records to output/books.csv.
-    """
 
     os.makedirs(
         "output",
         exist_ok=True
     )
 
-    output_file = "output/books.csv"
+    output_file = (
+        "output/books.csv"
+    )
 
     fieldnames = [
         "title",
         "product_url",
-        "price",
+        "price_gbp",
         "availability_count",
         "rating",
         "description",
@@ -542,26 +740,137 @@ def save_records_csv(records):
                 mode="json"
             )
 
-            writer.writerow(data)
+            writer.writerow(
+                data
+            )
 
     print()
+
     print(
         f"Saved {len(records)} records to "
         f"{output_file}"
     )
 
 
-# --------------------------------------------------
+# ==================================================
+# Save errors
+# ==================================================
+
+def save_errors(errors):
+
+    os.makedirs(
+        "output",
+        exist_ok=True
+    )
+
+    output_file = (
+        "output/errors.json"
+    )
+
+    with open(
+        output_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            errors,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    print()
+
+    print(
+        f"Saved {len(errors)} errors to "
+        f"{output_file}"
+    )
+
+
+# ==================================================
+# Save run report
+# ==================================================
+
+def save_run_report(report):
+
+    os.makedirs(
+        "output",
+        exist_ok=True
+    )
+
+    output_file = (
+        "output/run-report.json"
+    )
+
+    with open(
+        output_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            report,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    print()
+
+    print(
+        f"Saved run report to "
+        f"{output_file}"
+    )
+
+
+# ==================================================
 # Main program
-# --------------------------------------------------
+# ==================================================
 
 if __name__ == "__main__":
+
+    start_time = time.time()
+
+    # --------------------------------------------------
+    # Discover catalogue pages
+    # --------------------------------------------------
 
     (
         catalogue_pages,
         all_book_urls,
-        unique_book_urls
+        unique_book_urls,
+        catalogue_cache_hits,
+        catalogue_fetched_pages,
+        catalogue_failed_pages
     ) = discover_books()
+
+    # --------------------------------------------------
+    # Optional broken URL test
+    # --------------------------------------------------
+
+    if TEST_BROKEN_URL:
+
+        print()
+
+        print(
+            "BROKEN URL TEST ENABLED"
+        )
+
+        print(
+            f"Adding test URL: "
+            f"{TEST_BROKEN_URL}"
+        )
+
+        if TEST_BROKEN_URL not in unique_book_urls:
+
+            unique_book_urls.append(
+                TEST_BROKEN_URL
+            )
+
+    # --------------------------------------------------
+    # Discovery summary
+    # --------------------------------------------------
 
     print()
 
@@ -578,12 +887,16 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------
-    # Extract and validate all book records
+    # Extract and validate books
     # --------------------------------------------------
 
     records = []
 
-    validation_errors = 0
+    errors = []
+
+    detail_cache_hits = 0
+
+    detail_fetched_pages = 0
 
     for index, book_url in enumerate(
         unique_book_urls,
@@ -593,7 +906,8 @@ if __name__ == "__main__":
         print()
 
         print(
-            f"Processing book {index}/"
+            f"Processing book "
+            f"{index}/"
             f"{len(unique_book_urls)}"
         )
 
@@ -601,18 +915,38 @@ if __name__ == "__main__":
             f"cache/book-{index}.html"
         )
 
-        html = fetch_page(
-            book_url,
-            cache_file
-        )
-
-        raw_record = extract_book(
-            html,
-            book_url,
-            BASE_URL
-        )
-
         try:
+
+            # --------------------------------------------------
+            # Fetch
+            # --------------------------------------------------
+
+            html, from_cache = fetch_page(
+                book_url,
+                cache_file
+            )
+
+            if from_cache:
+
+                detail_cache_hits += 1
+
+            else:
+
+                detail_fetched_pages += 1
+
+            # --------------------------------------------------
+            # Extract
+            # --------------------------------------------------
+
+            raw_record = extract_book(
+                html,
+                book_url,
+                BASE_URL
+            )
+
+            # --------------------------------------------------
+            # Validate
+            # --------------------------------------------------
 
             validated_record = (
                 clean_and_validate_book(
@@ -631,14 +965,35 @@ if __name__ == "__main__":
 
         except Exception as error:
 
-            validation_errors += 1
+            print()
 
             print(
-                f"VALIDATION ERROR: "
-                f"{raw_record.get('title')}"
+                f"FAILED book page: "
+                f"{book_url}"
             )
 
-            print(error)
+            print(
+                f"ERROR: {error}"
+            )
+
+            errors.append({
+                "url": book_url,
+                "error": str(error)
+            })
+
+    # --------------------------------------------------
+    # Final statistics
+    # --------------------------------------------------
+
+    elapsed_seconds = round(
+        time.time() - start_time,
+        2
+    )
+
+    failed_pages = (
+        catalogue_failed_pages +
+        errors
+    )
 
     # --------------------------------------------------
     # Final summary
@@ -647,15 +1002,51 @@ if __name__ == "__main__":
     print()
 
     print(
+        "=============================="
+    )
+
+    print(
+        "FINAL RUN SUMMARY"
+    )
+
+    print(
+        "=============================="
+    )
+
+    print(
+        f"catalogue_pages={catalogue_pages}"
+    )
+
+    print(
+        f"discovered={len(all_book_urls)}"
+    )
+
+    print(
+        f"unique_urls={len(unique_book_urls)}"
+    )
+
+    print(
         f"detail_pages={len(records)}"
     )
 
     print(
-        f"validation_errors={validation_errors}"
+        f"valid_records={len(records)}"
+    )
+
+    print(
+        f"validation_errors={len(errors)}"
+    )
+
+    print(
+        f"failed_pages={len(failed_pages)}"
+    )
+
+    print(
+        f"elapsed_seconds={elapsed_seconds}"
     )
 
     # --------------------------------------------------
-    # Show first clean record
+    # Show first validated record
     # --------------------------------------------------
 
     if records:
@@ -675,19 +1066,90 @@ if __name__ == "__main__":
         )
 
     # --------------------------------------------------
-    # Save output files
+    # Save JSON
     # --------------------------------------------------
 
-    if validation_errors == 0:
+    save_records(
+        records
+    )
 
-        save_records(records)
+    # --------------------------------------------------
+    # Save CSV
+    # --------------------------------------------------
 
-        save_records_csv(records)
+    save_records_csv(
+        records
+    )
 
-    else:
+    # --------------------------------------------------
+    # Save errors
+    # --------------------------------------------------
 
-        print()
-        print(
-            "Output files were not saved because "
-            "validation errors were found."
-        )
+    save_errors(
+        failed_pages
+    )
+
+    # --------------------------------------------------
+    # Build run report
+    # --------------------------------------------------
+
+    run_report = {
+
+        "catalogue_pages":
+            catalogue_pages,
+
+        "discovered_urls":
+            len(all_book_urls),
+
+        "unique_urls":
+            len(unique_book_urls),
+
+        "detail_pages":
+            len(records),
+
+        "valid_records":
+            len(records),
+
+        "invalid_records":
+            len(errors),
+
+        "failed_pages":
+            len(failed_pages),
+
+        "catalogue_cache_hits":
+            catalogue_cache_hits,
+
+        "catalogue_fetched_pages":
+            catalogue_fetched_pages,
+
+        "detail_cache_hits":
+            detail_cache_hits,
+
+        "detail_fetched_pages":
+            detail_fetched_pages,
+
+        "total_cache_hits":
+            (
+                catalogue_cache_hits
+                +
+                detail_cache_hits
+            ),
+
+        "total_fetched_pages":
+            (
+                catalogue_fetched_pages
+                +
+                detail_fetched_pages
+            ),
+
+        "elapsed_seconds":
+            elapsed_seconds
+    }
+
+    # --------------------------------------------------
+    # Save run report
+    # --------------------------------------------------
+
+    save_run_report(
+        run_report
+    )
