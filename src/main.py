@@ -1,6 +1,7 @@
 import os
 import time
 import re
+import json
 import requests
 
 from decimal import Decimal
@@ -453,6 +454,50 @@ def clean_and_validate_book(raw_record):
 
 
 # --------------------------------------------------
+# Save validated records to JSON
+# --------------------------------------------------
+
+def save_records(records):
+    """
+    Save all validated records to output/books.json.
+    """
+
+    # Create output directory
+    os.makedirs(
+        "output",
+        exist_ok=True
+    )
+
+    output_file = "output/books.json"
+
+    # Convert Pydantic records into JSON-safe data
+    data = [
+        record.model_dump(mode="json")
+        for record in records
+    ]
+
+    # Save UTF-8 JSON
+    with open(
+        output_file,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            data,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    print()
+    print(
+        f"Saved {len(data)} records to "
+        f"{output_file}"
+    )
+
+
+# --------------------------------------------------
 # Main program
 # --------------------------------------------------
 
@@ -573,4 +618,20 @@ if __name__ == "__main__":
 
         print(
             records[0].model_dump()
+        )
+
+    # --------------------------------------------------
+    # Save JSON output
+    # --------------------------------------------------
+
+    if validation_errors == 0:
+
+        save_records(records)
+
+    else:
+
+        print()
+        print(
+            "JSON was not saved because "
+            "validation errors were found."
         )
