@@ -34,7 +34,7 @@ LOG_PATH = (
     / "llm-cost.jsonl"
 )
 
-MODEL = "gemini-3.6-flash"
+MODEL = "gemini-3.8-flash"
 
 MAX_RETRIES = 3
 BACKOFF_SECONDS = [1, 2, 4]
@@ -93,6 +93,7 @@ def extract_json_object(text: str) -> dict:
         text,
         flags=re.IGNORECASE,
     )
+
     text = re.sub(r"\s*```$", "", text)
 
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
@@ -192,7 +193,7 @@ def generate_content_with_retry(
                     system_instruction=system_prompt,
                     max_output_tokens=300,
                     thinking_config=types.ThinkingConfig(
-                        thinking_level="minimal",
+                        thinking_level="low",
                     ),
                 ),
             )
