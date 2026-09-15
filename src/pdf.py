@@ -1,9 +1,10 @@
+
 from datetime import date
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from report import get_report_data
+from .report import get_report_data
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent

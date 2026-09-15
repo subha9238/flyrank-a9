@@ -27,6 +27,15 @@ def main():
         )
         """
     )
+    connection.execute(
+    """
+    CREATE TABLE reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
+)
 
     for book in books:
         connection.execute(
