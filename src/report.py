@@ -41,6 +41,14 @@ def get_report_data():
         """
     ).fetchall()
 
+    all_books = connection.execute(
+        """
+        SELECT title, price, rating, url
+        FROM books
+        ORDER BY id
+        """
+    ).fetchall()
+
     connection.close()
 
     return {
@@ -61,5 +69,14 @@ def get_report_data():
                 "count": row[1],
             }
             for row in books_by_rating
+        ],
+        "all_books": [
+            {
+                "title": row[0],
+                "price": row[1],
+                "rating": row[2],
+                "url": row[3],
+            }
+            for row in all_books
         ],
     }
