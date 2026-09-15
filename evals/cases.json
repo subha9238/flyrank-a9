@@ -1,0 +1,66 @@
+[
+  {
+    "id": "case-01",
+    "text": "A fantasy novel about a young wizard who discovers a hidden magical kingdom.",
+    "expected": {
+      "category": "fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-02",
+    "text": "A mystery story about a detective investigating a disappearance in a small coastal town.",
+    "expected": {
+      "category": "fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-03",
+    "text": "A romance novel about two musicians who fall in love while touring Europe.",
+    "expected": {
+      "category": "fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-04",
+    "text": "A practical guide explaining how businesses can improve their financial planning and budgeting.",
+    "expected": {
+      "category": "non-fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-05",
+    "text": "A biography describing the life and career of a famous scientist.",
+    "expected": {
+      "category": "non-fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-06",
+    "text": "A history book examining the causes and consequences of a major war.",
+    "expected": {
+      "category": "non-fiction",
+      "confidence": "high"
+    }
+  },
+  {
+    "id": "case-07",
+    "text": "A book about a mysterious journey.",
+    "expected": {
+      "category": "unknown",
+      "confidence": "low"
+    }
+  },
+  {
+    "id": "case-08",
+    "text": "A book that discusses leadership and teamwork.",
+    "expected": {
+      "category": "unknown",
+      "confidence": "low"
+    }
+  }
+]
